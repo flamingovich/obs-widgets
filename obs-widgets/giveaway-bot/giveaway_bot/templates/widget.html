@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Giveaway Widget</title>
+    <style>
+        @font-face {
+            font-family: 'CustomFont';
+            src: url('http://localhost:5000/fonts/font.ttf') format('truetype');
+            font-display: swap;
+        }
+
+        @font-face {
+            font-family: 'UnboundedSemiBold';
+            src: url('/fonts/Unbounded-SemiBold.ttf') format('truetype');
+            font-display: swap;
+        }
+        
+        * { margin: 0; padding: 0; }
+        
+        body {
+            background: transparent;
+            font-family: 'CustomFont', sans-serif;
+            overflow: hidden;
+        }
+        
+        .widget {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 10px 25px;
+            color: white;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.5);
+            white-space: nowrap;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            background-size: cover;
+            background-position: center;
+            margin-top: 28px;
+            margin-left: 12px;
+            position: relative;
+        }
+        
+        .widget.visible { opacity: 1; }
+        
+        .widget.winner-mode {
+            animation: celebrate 0.5s ease-in-out infinite alternate;
+        }
+        
+        @keyframes celebrate {
+            from { transform: scale(1); }
+            to { transform: scale(1.02); }
+        }
+        
+        .content {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            position: relative;
+        }
+        
+        .element { display: inline; }
+        .element.hidden { display: none !important; }
+        
+        .keyword {
+            padding: 3px 12px;
+            border-radius: 15px;
+            font-weight: bold;
+        }
+        
+        .winner-avatar {
+            border-radius: 50%;
+            object-fit: cover;
+        }
+        
+        .winner-info-wrapper {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 12px;
+            border-radius: 20px;
+        }
+        
+        .countdown {
+            font-weight: bold;
+            animation: countdownPulse 0.3s ease-in-out;
+        }
+        
+        @keyframes countdownPulse {
+            0% { transform: scale(0.8); opacity: 0.5; }
+            50% { transform: scale(1.1); opacity: 1; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        
+        .timer {
+            opacity: 0.9;
+        }
+
+        .count-wrap {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            min-width: 64px;
+            justify-content: flex-end;
+        }
+
+        /* Справа от числа — не перекрывает ключ и подпись слева */
+        .join-fx-layer {
+            position: absolute;
+            left: 100%;
+            top: -4px;
+            margin-left: 10px;
+            pointer-events: none;
+            min-width: 1px;
+            min-height: 1px;
+        }
+
+        .join-fx-item {
+            position: absolute;
+            left: 0;
+            top: 0;
+            color: #ffffff;
+            font-size: 18px;
+            font-weight: 700;
+            font-family: 'UnboundedSemiBold', 'CustomFont', sans-serif;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+            white-space: nowrap;
+            max-width: none;
+            overflow: visible;
+            text-overflow: clip;
+            transform: translateY(4px) scale(0.96);
+            opacity: 0;
+            animation: joinPop 1.75s ease-out forwards;
+            will-change: transform, opacity;
+        }
+
+        .join-fx-item.join-fx-batch {
+            font-size: 17px;
+            letter-spacing: 0.02em;
+        }
+
+        @keyframes joinPop {
+            0% { transform: translateY(4px) scale(0.96); opacity: 0; }
+            14% { transform: translateY(0) scale(1); opacity: 1; }
+            72% { transform: translateY(-8px) scale(1); opacity: 1; }
+            100% { transform: translateY(-16px) scale(0.99); opacity: 0; }
+        }
+    </style>
+</head>
+<body>
+    <div class="widget" id="widget">
+        <!-- Countdown -->
+        <div class="content" id="countdownState" style="display: none;">
+            <span class="countdown" id="countdownNumber">3</span>
+        </div>
+        
+        <!-- Active -->
+        <div class="content" id="activeState">
+            <span class="element" id="labelText"></span>
+            <span class="element keyword" id="keyword"></span>
+            <span class="element" id="separatorText"></span>
+            <span class="count-wrap">
+                <span class="element" id="countText"></span>
+                <span class="join-fx-layer" id="joinFxLayer"></span>
+            </span>
+        </div>
+        
+        <!-- Winner -->
+        <div class="content" id="winnerState" style="display: none;">
+            <span class="element" id="winnerLabelStart"></span>
+            <span class="winner-info-wrapper" id="winnerInfoWrapper">
+                <img class="element winner-avatar" id="winnerAvatar" src="" alt="">
+                <span class="element" id="winnerName"></span>
+            </span>
+            <span class="element" id="winnerLabelEnd"></span>
+            <span class="element timer" id="timerText"></span>
+        </div>
+    </div>
+
+    <script>
+        let settings = {};
+        let currentState = 'hidden';
+        let lastWinner = null;
+        let lastCountdown = 0;
+        let lastParticipantsSet = new Set();
+        let joinFxQueue = [];
+        let joinFxActive = 0;
+        /** Одновременно мало «плашек», иначе каша при всплесках. */
+        const JOIN_FX_MAX_ACTIVE = 2;
+        const JOIN_FX_MAX_QUEUE = 24;
+        /** Сколько и больше новых за один опрос — одна строка «+N участников». */
+        const JOIN_FX_BATCH_THRESHOLD = 3;
+        const JOIN_FX_BASE_FONT = 18;
+        const JOIN_FX_MIN_FONT = 12;
+        const JOIN_FX_MAX_TEXT_WIDTH = 420;
+        const JOIN_FX_ROW_GAP = 26;
+        
+        function formatTime(seconds) {
+            if (seconds === null || seconds === undefined) return '00:00';
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+        
+        async function loadSettings() {
+            try {
+                const res = await fetch('/api/widget-settings');
+                settings = await res.json();
+            } catch (e) {
+                console.error('Error loading settings:', e);
+            }
+        }
+        
+        function getTextStyle() {
+            let style = '';
+            
+            if (settings.text_stroke_enabled) {
+                style += `-webkit-text-stroke: ${settings.text_stroke_width}px ${settings.text_stroke_color};`;
+            }
+            
+            if (settings.text_shadow_enabled) {
+                style += `text-shadow: ${settings.text_shadow_x}px ${settings.text_shadow_y}px ${settings.text_shadow_blur}px ${settings.text_shadow_color};`;
+            }
+            
+            return style;
+        }
+        
+        function applyElement(el, visible, color, size, text = null, extraStyle = '') {
+            if (!el) return;
+            
+            const textStyle = getTextStyle();
+            
+            if (visible === false) {
+                el.classList.add('hidden');
+            } else {
+                el.classList.remove('hidden');
+            }
+            
+            if (text !== null) {
+                el.textContent = text;
+            }
+            
+            el.style.cssText = `color: ${color}; font-size: ${size}px; ${extraStyle} ${textStyle}`;
+        }
+        
+        function applySettings(mode, data) {
+            const widget = document.getElementById('widget');
+            
+            widget.style.minWidth = settings.width + 'px';
+            widget.style.height = settings.height + 'px';
+            widget.style.borderRadius = settings.border_radius + 'px';
+            
+            // Background
+            if (mode === 'winner' || mode === 'countdown') {
+                if (settings.bg_type_winner === 'image' && settings.bg_image_winner) {
+                    widget.style.background = `url('http://localhost:5000/images/${settings.bg_image_winner}') center/cover`;
+                } else if (settings.bg_type_winner === 'color') {
+                    widget.style.background = settings.winner_bg_1;
+                } else {
+                    widget.style.background = `linear-gradient(135deg, ${settings.winner_bg_1} 0%, ${settings.winner_bg_2} 100%)`;
+                }
+            } else {
+                if (settings.bg_type_active === 'image' && settings.bg_image_active) {
+                    widget.style.background = `url('http://localhost:5000/images/${settings.bg_image_active}') center/cover`;
+                } else if (settings.bg_type_active === 'color') {
+                    widget.style.background = settings.bg_color_1;
+                } else {
+                    widget.style.background = `linear-gradient(135deg, ${settings.bg_color_1} 0%, ${settings.bg_color_2} 100%)`;
+                }
+            }
+            
+            // Active elements
+            applyElement(
+                document.getElementById('labelText'),
+                settings.show_label,
+                settings.text_color_label,
+                settings.font_size_label,
+                settings.text_label
+            );
+            
+            applyElement(
+                document.getElementById('keyword'),
+                settings.show_keyword,
+                settings.text_color_keyword,
+                settings.font_size_keyword,
+                data?.keyword || '123',
+                `background: ${settings.keyword_bg_color}; padding: 3px 12px; border-radius: 15px;`
+            );
+            
+            applyElement(
+                document.getElementById('separatorText'),
+                settings.show_separator,
+                settings.text_color_separator,
+                settings.font_size_separator,
+                settings.text_separator
+            );
+            
+            applyElement(
+                document.getElementById('countText'),
+                settings.show_count,
+                settings.text_color_count,
+                settings.font_size_count,
+                (data?.count || 0) + ' ' + (settings.text_count_suffix || '👥')
+            );
+            
+            // Winner elements
+            applyElement(
+                document.getElementById('winnerLabelStart'),
+                settings.show_winner_label_start,
+                settings.text_color_winner_label,
+                settings.font_size_winner_label,
+                settings.text_winner_label_start
+            );
+            
+            applyElement(
+                document.getElementById('winnerLabelEnd'),
+                settings.show_winner_label_end,
+                settings.text_color_winner_label,
+                settings.font_size_winner_label,
+                settings.text_winner_label_end
+            );
+            
+            applyElement(
+                document.getElementById('winnerName'),
+                settings.show_winner_name,
+                settings.text_color_winner_name,
+                settings.font_size_winner_name,
+                data?.winner || 'Username',
+                'font-weight: bold;'
+            );
+            
+            // Timer
+            const timerText = (settings.text_timer_prefix || '⏱️') + ' ' + formatTime(data?.timer_seconds);
+            applyElement(
+                document.getElementById('timerText'),
+                settings.show_timer && data?.winner,
+                settings.text_color_timer,
+                settings.font_size_timer,
+                timerText
+            );
+            
+            // Avatar
+            const avatarEl = document.getElementById('winnerAvatar');
+            if (settings.show_winner_avatar && data?.winner_avatar) {
+                avatarEl.classList.remove('hidden');
+                avatarEl.src = data.winner_avatar;
+                avatarEl.style.width = settings.winner_avatar_size + 'px';
+                avatarEl.style.height = settings.winner_avatar_size + 'px';
+                avatarEl.style.borderRadius = settings.winner_avatar_border_radius + '%';
+            } else {
+                avatarEl.classList.add('hidden');
+            }
+            
+            // Winner info wrapper (подложка)
+            const winnerWrapper = document.getElementById('winnerInfoWrapper');
+            if (winnerWrapper) {
+                if (settings.winner_info_bg_enabled) {
+                    winnerWrapper.style.background = settings.winner_info_bg_color || 'rgba(0,0,0,0.3)';
+                } else {
+                    winnerWrapper.style.background = 'transparent';
+                }
+            }
+            
+            // Countdown
+            const countdownEl = document.getElementById('countdownNumber');
+            countdownEl.style.cssText = `color: ${settings.text_color_countdown}; font-size: ${settings.font_size_countdown}px; ${getTextStyle()}`;
+        }
+
+        function joinBatchLabel(n) {
+            const k = Math.floor(Number(n)) || 0;
+            if (k <= 0) return '+0';
+            const mod10 = k % 10;
+            const mod100 = k % 100;
+            if (mod10 === 1 && mod100 !== 11) return `+${k} участник`;
+            if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return `+${k} участника`;
+            return `+${k} участников`;
+        }
+
+        function dequeueJoinFxEntry() {
+            if (joinFxQueue.length === 0) return null;
+            let e = joinFxQueue.shift();
+            if (e && typeof e === 'object' && e.kind === 'batch') {
+                while (joinFxQueue.length > 0) {
+                    const peek = joinFxQueue[0];
+                    if (peek && typeof peek === 'object' && peek.kind === 'batch') {
+                        const next = joinFxQueue.shift();
+                        e = { kind: 'batch', n: e.n + next.n };
+                    } else break;
+                }
+            }
+            return e;
+        }
+
+        function enqueueJoinFx(usernames) {
+            if (!Array.isArray(usernames) || usernames.length === 0) return;
+            const n = usernames.length;
+            if (n >= JOIN_FX_BATCH_THRESHOLD) {
+                const last = joinFxQueue[joinFxQueue.length - 1];
+                if (last && typeof last === 'object' && last.kind === 'batch') {
+                    last.n += n;
+                } else if (joinFxQueue.length < JOIN_FX_MAX_QUEUE) {
+                    joinFxQueue.push({ kind: 'batch', n });
+                }
+            } else {
+                for (const name of usernames) {
+                    if (joinFxQueue.length >= JOIN_FX_MAX_QUEUE) break;
+                    joinFxQueue.push(name);
+                }
+            }
+            flushJoinFxQueue();
+        }
+
+        function flushJoinFxQueue() {
+            const layer = document.getElementById('joinFxLayer');
+            if (!layer) return;
+
+            while (joinFxActive < JOIN_FX_MAX_ACTIVE && joinFxQueue.length > 0) {
+                const entry = dequeueJoinFxEntry();
+                if (entry == null) break;
+                joinFxActive += 1;
+
+                const isBatch = entry && typeof entry === 'object' && entry.kind === 'batch';
+                const item = document.createElement('span');
+                item.className = 'join-fx-item' + (isBatch ? ' join-fx-batch' : '');
+                if (isBatch) {
+                    item.textContent = joinBatchLabel(entry.n);
+                    item.style.animationDuration = '1.2s';
+                } else {
+                    item.textContent = `+ ${entry}`;
+                    item.style.animationDuration = '1.75s';
+                }
+                item.style.top = `${(joinFxActive - 1) * JOIN_FX_ROW_GAP}px`;
+                item.style.fontSize = JOIN_FX_BASE_FONT + 'px';
+
+                item.addEventListener('animationend', () => {
+                    item.remove();
+                    joinFxActive = Math.max(0, joinFxActive - 1);
+                    if (joinFxQueue.length > 0) {
+                        requestAnimationFrame(flushJoinFxQueue);
+                    }
+                });
+
+                layer.appendChild(item);
+                fitJoinFxFontSize(item);
+            }
+        }
+
+        function fitJoinFxFontSize(item) {
+            if (!item) return;
+            let size = JOIN_FX_BASE_FONT;
+            const textLength = (item.textContent || '').length;
+
+            if (textLength > 22) size = 17;
+            if (textLength > 30) size = 16;
+            if (textLength > 38) size = 14;
+            if (textLength > 48) size = 13;
+
+            item.style.fontSize = size + 'px';
+
+            while (item.offsetWidth > JOIN_FX_MAX_TEXT_WIDTH && size > JOIN_FX_MIN_FONT) {
+                size -= 1;
+                item.style.fontSize = size + 'px';
+            }
+        }
+        
+        async function update() {
+            try {
+                const res = await fetch('/api/status');
+                const data = await res.json();
+                
+                const widget = document.getElementById('widget');
+                const activeState = document.getElementById('activeState');
+                const winnerState = document.getElementById('winnerState');
+                const countdownState = document.getElementById('countdownState');
+                
+                let newState = 'hidden';
+                
+                if (data.countdown > 0) {
+                    newState = 'countdown';
+                } else if (data.winner) {
+                    newState = 'winner';
+                } else if (data.is_active) {
+                    newState = 'active';
+                }
+                
+                // Countdown
+                if (newState === 'countdown') {
+                    applySettings('countdown', data);
+                    widget.classList.remove('winner-mode');
+                    activeState.style.display = 'none';
+                    winnerState.style.display = 'none';
+                    countdownState.style.display = 'flex';
+                    
+                    if (lastCountdown !== data.countdown) {
+                        const countdownEl = document.getElementById('countdownNumber');
+                        countdownEl.style.animation = 'none';
+                        countdownEl.offsetHeight;
+                        countdownEl.style.animation = 'countdownPulse 0.3s ease-in-out';
+                        countdownEl.textContent = data.countdown;
+                        lastCountdown = data.countdown;
+                    }
+                    
+                    widget.classList.add('visible');
+                    
+                // Winner
+                } else if (newState === 'winner') {
+                    applySettings('winner', data);
+                    widget.classList.add('winner-mode');
+                    activeState.style.display = 'none';
+                    countdownState.style.display = 'none';
+                    winnerState.style.display = 'flex';
+                    
+                    document.getElementById('winnerName').textContent = data.winner;
+                    
+                    // Update timer
+                    const timerText = (settings.text_timer_prefix || '⏱️') + ' ' + formatTime(data.timer_seconds);
+                    document.getElementById('timerText').textContent = timerText;
+                    
+                    widget.classList.add('visible');
+                    lastWinner = data.winner;
+                    lastParticipantsSet = new Set(data.participants || []);
+                    
+                // Active
+                } else if (newState === 'active') {
+                    applySettings('active', data);
+                    widget.classList.remove('winner-mode');
+                    activeState.style.display = 'flex';
+                    winnerState.style.display = 'none';
+                    countdownState.style.display = 'none';
+                    
+                    document.getElementById('keyword').textContent = data.keyword;
+                    document.getElementById('countText').textContent = data.count + ' ' + (settings.text_count_suffix || '👥');
+
+                    const nowSet = new Set(data.participants || []);
+                    const newUsers = [];
+                    for (const user of nowSet) {
+                        if (!lastParticipantsSet.has(user)) {
+                            newUsers.push(user);
+                        }
+                    }
+                    if (newUsers.length > 0) {
+                        enqueueJoinFx(newUsers);
+                    }
+                    lastParticipantsSet = nowSet;
+                    
+                    widget.classList.add('visible');
+                    lastWinner = null;
+                    lastCountdown = 0;
+                    
+                // Hidden
+                } else {
+                    widget.classList.remove('visible');
+                    lastWinner = null;
+                    lastCountdown = 0;
+                    lastParticipantsSet = new Set();
+                    joinFxQueue = [];
+                }
+                
+                currentState = newState;
+                
+            } catch (e) {
+                console.error('Error updating:', e);
+            }
+        }
+        
+        loadSettings();
+        setInterval(update, 200);
+        setInterval(loadSettings, 5000);
+    </script>
+</body>
+</html>
