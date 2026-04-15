@@ -1,7 +1,7 @@
 # Локальный бридж для OBS-виджета: лайки с эфира через yt-dlp.
 # Запуск: pip install -r requirements.txt
 #         python likes_bridge.py
-# По умолчанию порт 8765. Виджет дергает GET /status?channel=...&goal=...
+# По умолчанию порт 8766. Виджет дергает GET /status?channel=...&goal=...
 
 from __future__ import annotations
 
@@ -315,7 +315,7 @@ def proxy_thumb():
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--host", default="127.0.0.1")
-    p.add_argument("--port", type=int, default=8765)
+    p.add_argument("--port", type=int, default=8766)
     args = p.parse_args()
     app.run(host=args.host, port=args.port, threaded=True, use_reloader=False)
 
